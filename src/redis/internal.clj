@@ -5,11 +5,13 @@
 
 (set! *warn-on-reflection* true)
 
-(defstruct connection :host :port :db :timeout :socket :reader :writer)
+(defstruct connection
+  :host :port :password :db :timeout :socket :reader :writer)
 
 (def *connection* (struct-map connection
                     :host     "127.0.0.1"
                     :port     6379
+                    :password nil
                     :db       0
                     :timeout  5000
                     :socket   nil
@@ -201,6 +203,9 @@
           :get (let [pattern (first args)]
                  (recur (conj arg-strings "GET" pattern)
                         (rest args)))
+          :store (let [key (first args)]
+                   (recur (conj arg-strings "STORE" key)
+                          (rest args)))
           :alpha (recur (conj arg-strings "ALPHA") args)
           :asc  (recur (conj arg-strings "ASC") args)
           :desc (recur (conj arg-strings "DESC") args)

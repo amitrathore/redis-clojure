@@ -108,7 +108,7 @@
   (is (= :set (redis/type "set"))))
 
 (deftest keys
-  (is (= nil (redis/keys "a*")))
+  (is (= [] (redis/keys "a*")))
   (is (= ["foo"] (redis/keys "f*")))
   (is (= ["foo"] (redis/keys "f?o")))
   (redis/set "fuu" "baz")
@@ -131,8 +131,7 @@
   (redis/set "bar" "baz")
   (redis/rename "foo" "bar")
   (is (= "bar" (redis/get "bar")))
-  (is (= nil (redis/get "foo")))
-  )
+  (is (= nil (redis/get "foo"))))
 
 (deftest renamenx
   (is (thrown? Exception (redis/renamenx "foo" "foo")))
@@ -142,8 +141,7 @@
   (is (= nil (redis/get "foo")))
   (redis/set "foo" "bar")
   (redis/set "bar" "baz")
-  (is (= false (redis/renamenx "foo" "bar")))
-  )
+  (is (= false (redis/renamenx "foo" "bar"))))
 
 (deftest dbsize
   (let [size-before (redis/dbsize)]
@@ -159,8 +157,7 @@
   (redis/set "foo" "bar")
   (is (= true (redis/expire "foo" 20)))
   (is (= false (redis/expire "foo" 10)))
-  (is (= false (redis/expire "nonexistent" 42)))
-  )
+  (is (= false (redis/expire "nonexistent" 42))))
 
 (deftest ttl
   (is (= -1 (redis/ttl "nonexistent")))
@@ -364,13 +361,18 @@
   (is (= true (redis/zrem "zset" "two")))
   (is (= ["one" "three"] (redis/zrange "zset" 0 1))))
 
+(deftest zincrby
+  (is (thrown? Exception (redis/zincrby "foo")))
+  (is (= 3.141592 (redis/zincrby "zset" 3.141592 "value")))
+  (is (= 42.141593) (redis/zincrby "zset" 42.00001 "value"))
+  (is (= 3.141592) (redis/zincrby "zset" -42.00001 "value")))
+
 (deftest zscore
   (is (thrown? Exception (redis/zscore "foo")))
   (redis/zadd "zset" 3.141592 "pi")
   (is (= 3.141592 (redis/zscore "zset" "pi")))
   (redis/zadd "zset" -42 "neg")
   (is (= -42 (redis/zscore "zset" "neg"))))
-
 
 (deftest zrange
   (is (thrown? Exception (redis/zrange "foo")))
@@ -382,6 +384,16 @@
   (is (= ["two" "three" "one"] (redis/zrange "zset" 0 2)))
   (is (= ["three" "one"] (redis/zrange "zset" 1 2))))
 
+(deftest zrevrange
+  (is (thrown? Exception (redis/zrevrange "foo")))
+  (is (= nil (redis/zrevrange "zset" 0 99)))
+  (redis/zadd "zset" 12349809.23873948579348750 "one")
+  (redis/zadd "zset" -42 "two")
+  (redis/zadd "zset" 3.141592 "three")
+  (is (= [] (redis/zrevrange "zset" -1 -2)))
+  (is (= ["one" "three" "two"] (redis/zrevrange "zset" 0 2)))
+  (is (= ["three" "two"] (redis/zrevrange "zset" 1 2))))
+
 (deftest zrangebyscore
   (is (thrown? Exception (redis/zrangebyscore "foo")))
   (is (= nil (redis/zrangebyscore "zset" 0 99)))
@@ -391,6 +403,55 @@
   (is (= [] (redis/zrangebyscore "zset" -42 0.99)))
   (is (= ["two"] (redis/zrangebyscore "zset" 1.1 2.9)))
   (is (= ["two" "three"] (redis/zrangebyscore "zset" 1.0000001 3.00001))))
+
+(deftest zremrangebyscore
+  (is (thrown? Exception (redis/zremrangebyscore "foo")))
+  (is (= 0 (redis/zremrangebyscore "zset" 0 42.4)))
+  (redis/zadd "zset" 1.0 "one")
+  (redis/zadd "zset" 2.0 "two")
+  (redis/zadd "zset" 3.0 "three")
+  (is (= 1 (redis/zremrangebyscore "zset" 2.0 2.999999))))
+
+(deftest zcard
+  (is (thrown? Exception (redis/zcard "foo")))
+  (is (= 0 (redis/zcard "zset")))
+  (redis/zadd "zset" 1.0 "one")
+  (is (= 1 (redis/zcard "zset"))))
+
+;;
+;; MULTI/EXEC/DISCARD
+;;
+(deftest multi-exec
+  (redis/set "key" "value")
+  (redis/multi)
+  (is (= "QUEUED" (redis/set "key" "blahonga")))
+  (redis/exec)
+  (is (= "blahonga" (redis/get "key"))))
+
+(deftest multi-discard
+  (redis/set "key" "value")
+  (redis/multi)
+  (is (= "QUEUED" (redis/set "key" "blahonga")))
+  (redis/discard)
+  (is (= "value" (redis/get "key"))))
+
+(deftest atomically
+  (redis/set "key" "value")
+  (is (= ["OK" "OK" "blahong"]
+       (redis/atomically
+        (redis/set "key" "blahonga")
+        (redis/set "key2" "blahong")
+        (redis/get "key2"))))
+  (is (= "blahonga" (redis/get "key"))))
+
+(deftest atomically-with-exception
+  (redis/set "key" "value")
+  (is (thrown? Exception 
+               (redis/atomically
+                (redis/set "key" "blahonga")
+                (throw (Exception. "Fail"))
+                (redis/set "key2" "blahong"))))
+  (is (= "value" (redis/get "key"))))
 
 ;;
 ;; Sorting
@@ -428,7 +489,9 @@
   (is (= ["one" "two" "three" "four"]
          (redis/sort "ids" :get "object_*")))
   (is (= ["one" "two"]
-         (redis/sort "ids" :by "name_*" :alpha :limit 0 2 :desc :get "object_*"))))
+         (redis/sort "ids" :by "name_*" :alpha :limit 0 2 :desc :get "object_*")))
+  (redis/sort "ids" :by "name_*" :alpha :limit 0 2 :desc :get "object_*" :store "result")
+  (is (= ["one" "two"] (redis/lrange "result" 0 -1))))
 
 
 
@@ -451,6 +514,9 @@
 
 (deftest bgsave
   (redis/bgsave))
+
+(deftest bgrewriteaof
+  (redis/bgrewriteaof))
 
 (deftest lastsave
   (let [ages-ago (new java.util.Date (long 1))]

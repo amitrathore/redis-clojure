@@ -13,8 +13,26 @@
   [server-spec & body]
   `(with-server* ~server-spec (fn []
                                 (do
+                                  (if (:password *connection*)
+                                    (redis/auth (:password *connection*)))
                                   (redis/select (:db *connection*))
                                   ~@body))))
+
+(defmacro atomically
+  "Execute all redis commands in body atomically, ie. sandwiched in a
+  MULTI/EXEC statement. If an exception is thrown the EXEC command
+  will be terminated by a DISCARD, no operations will be performed and
+  the exception will be rethrown." 
+  [& body]
+  `(do 
+     (redis/multi) 
+     (try
+      (do 
+        ~@body
+        (redis/exec))
+      (catch Exception e#
+        (redis/discard)
+        (throw e#)))))
 
 ;;
 ;; Reply conversion functions
@@ -28,13 +46,6 @@
   "Convert a string reply to a keyword"
   [string]
   (keyword string))
-
-(defn string-to-seq
-  "Convert a space separated string to a sequence of words"
-  [#^String string]
-  (if (empty? string)
-    nil
-    (re-seq #"\S+" string)))
 
 (defn string-to-map
   "Convert strings with format 'key:value\r\n'+ to a map with {key
@@ -63,8 +74,8 @@
 ;;
 (defcommands
   ;; Connection handling
-  (auth        [] :inline)
-  (quit        [password] :inline)
+  (auth        [password] :inline)
+  (quit        [] :inline)
   (ping        [] :inline)
   ;; String commands
   (set         [key value] :bulk)
@@ -82,7 +93,7 @@
   (del         [key] :inline int-to-bool)
   ;; Key space commands
   (type        [key] :inline string-to-keyword)
-  (keys        [pattern] :inline string-to-seq)
+  (keys        [pattern] :inline)
   (randomkey   [] :inline)
   (rename      [oldkey newkey] :inline)
   (renamenx    [oldkey newkey] :inline int-to-bool)
@@ -117,9 +128,17 @@
   ;; ZSet commands
   (zadd        [key score member] :bulk int-to-bool)
   (zrem        [key member] :bulk int-to-bool)
+  (zincrby     [key increment member] :bulk string-to-double)
   (zscore      [key member] :bulk string-to-double)
+  (zcard       [key] :inline)
   (zrange      [key start end] :inline)
+  (zrevrange   [key start end] :inline)
   (zrangebyscore [key start end] :inline)
+  (zremrangebyscore [key start end] :inline)
+  ;; MULTI/EXEC/DISCARD
+  (multi       [] :inline)
+  (exec        [] :inline)
+  (discard     [] :inline)
   ;; Multiple database handling commands
   (select      [index] :inline)
   (move        [key dbindex] :inline)
@@ -130,6 +149,7 @@
   ;; Persistence
   (save        [] :inline)
   (bgsave      [] :inline)
+  (bgrewriteaof [] :inline)
   (lastsave    [] :inline int-to-date)
   (shutdown    [] :inline)
   ;; Remote control
