@@ -2,10 +2,13 @@
   (:import [java.io Reader BufferedReader InputStreamReader StringReader]
            [java.net Socket]
            [org.apache.commons.pool.impl SoftReferenceObjectPool]
-           [org.apache.commons.pool BasePoolableObjectFactory]))
+           [org.apache.commons.pool BasePoolableObjectFactory])
+  (:use redis.utils))
 
 (defstruct connection
   :host :port :password :db :timeout :socket :reader :writer)
+
+(def *factory* (atom nil))
 
 (def *connection* (struct-map connection
                     :host     "127.0.0.1"
@@ -53,12 +56,17 @@
         bytes (.getBytes cmd)]
     (.write out bytes)))
 
-(defn connection-factory []
+(defn connection-factory [server-spec]
   (proxy [BasePoolableObjectFactory] []
     (makeObject []
-      ())))
+      (new-redis-connection server-spec))))
 
-(defn get-connection-from-pool [])
+(defrunonce init-factory [server-spec]
+  (reset! *factory* (connection-factory server-spec)))
 
-(defn return-connection-to-pool [c])
+(defn get-connection-from-pool []
+  (.borrowObject *factory*))
+
+(defn return-connection-to-pool [c]
+  (.returnObject *factory* c))
 
