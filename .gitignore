@@ -6,3 +6,14 @@ lib
 build.properties
 target
 pom.xml
+*~
+*#*
+.classpath
+.project
+config/config.clj
+scripts/furtive
+logs/*
+.DS_Store
+
+
+
