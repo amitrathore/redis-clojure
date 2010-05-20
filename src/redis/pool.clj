@@ -8,7 +8,7 @@
 (defstruct connection
   :host :port :password :db :timeout :socket :reader :writer)
 
-(def *factory* (atom nil))
+(def *pool* (atom nil))
 
 (def *connection* (struct-map connection
                     :host     "127.0.0.1"
@@ -39,12 +39,6 @@
       :socket socket
       :reader reader))) 
 
-(defn with-server*
-  [server-spec func]
-  (println "with-server*")
-  (binding [*connection* (new-redis-connection server-spec)]
-    (func)))
- 
 (defn socket* []
   (or (:socket *connection*)
       (throw (Exception. "Not connected to a Redis server"))))
@@ -59,14 +53,26 @@
 (defn connection-factory [server-spec]
   (proxy [BasePoolableObjectFactory] []
     (makeObject []
-      (new-redis-connection server-spec))))
+      (new-redis-connection server-spec))
+    (destroyObject [c]
+       (.close (:socket c)))))
 
-(defrunonce init-factory [server-spec]
-  (reset! *factory* (connection-factory server-spec)))
+(defrunonce init-pool [server-spec]
+  (let [factory (connection-factory server-spec)]
+    (reset! *pool* (SoftReferenceObjectPool. factory))))
 
-(defn get-connection-from-pool []
-  (.borrowObject *factory*))
+(defn get-connection-from-pool [server-spec]
+  (if-not @*pool* 
+    (init-pool server-spec))
+  (.borrowObject @*pool*))
 
 (defn return-connection-to-pool [c]
-  (.returnObject *factory* c))
+  (.returnObject @*pool* c))
 
+(defn with-server*
+  [server-spec func]
+  (println "with-server*")
+  (binding [*connection* (get-connection-from-pool server-spec)]
+    (let [ret (func)]
+      (return-connection-to-pool *connection*)
+      ret)))
