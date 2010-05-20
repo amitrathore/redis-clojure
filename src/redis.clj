@@ -1,6 +1,6 @@
 (ns redis
   (:refer-clojure :exclude [get set type keys sort])
-  (:use redis.internal))
+  (:use redis.pool redis.internal))
 
 (defmacro with-server
   "Evaluates body in the context of a new connection to a Redis server

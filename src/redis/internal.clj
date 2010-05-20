@@ -1,22 +1,10 @@
 (ns redis.internal
+  (:use redis.pool)
   (:refer-clojure :exclude [send read read-line])
   (:import [java.io Reader BufferedReader InputStreamReader StringReader]
            [java.net Socket]))
 
 (set! *warn-on-reflection* true)
-
-(defstruct connection
-  :host :port :password :db :timeout :socket :reader :writer)
-
-(def *connection* (struct-map connection
-                    :host     "127.0.0.1"
-                    :port     6379
-                    :password nil
-                    :db       0
-                    :timeout  5000
-                    :socket   nil
-                    :reader   nil
-                    :writer   nil))
 
 (def *cr*  0x0d)
 (def *lf*  0x0a)
@@ -28,39 +16,6 @@
 (defn- parse-int [#^String s] (Integer/parseInt s))
 ;(defn- char-array [len] (make-array Character/TYPE len))
 
-(defn connect-to-server
-  "Create a Socket connected to server"
-  [server]
-  (let [{:keys [host port timeout]} server
-        socket (Socket. #^String host #^Integer port)]
-    (doto socket
-      (.setTcpNoDelay true)
-      (.setKeepAlive true))))
- 
-(defn with-server*
-  [server-spec func]
-  (let [connection (merge *connection* server-spec)]
-    (with-open [#^Socket socket (connect-to-server connection)]
-      (let [input-stream (.getInputStream socket)
-            output-stream (.getOutputStream socket)
-            reader (BufferedReader. (InputStreamReader. input-stream))]
-        (binding [*connection* (assoc connection 
-                                 :socket socket
-                                 :reader reader)]
-          (func))))))
- 
-(defn socket* []
-  (or (:socket *connection*)
-      (throw (Exception. "Not connected to a Redis server"))))
-
-(defn send-command
-  "Send a command string to server"
-  [#^String cmd]
-  (let [out (.getOutputStream (#^Socket socket*))
-        bytes (.getBytes cmd)]
-    (.write out bytes)))
- 
- 
 (defn read-crlf
   "Read a CR+LF combination from Reader"
   [#^Reader reader]
@@ -267,3 +222,16 @@
 
 
 
+(comment
+(defn with-server*
+  [server-spec func]
+  (let [connection (merge *connection* server-spec)]
+    (with-open [#^Socket socket (connect-to-server connection)]
+      (let [input-stream (.getInputStream socket)
+            output-stream (.getOutputStream socket)
+            reader (BufferedReader. (InputStreamReader. input-stream))]
+        (binding [*connection* (assoc connection 
+                                 :socket socket
+                                 :reader reader)]
+          (func))))))
+)
