@@ -71,7 +71,6 @@
 
 (defn with-server*
   [server-spec func]
-  (println "with-server*")
   (binding [*connection* (get-connection-from-pool server-spec)]
     (let [ret (func)]
       (return-connection-to-pool *connection*)
