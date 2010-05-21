@@ -1,7 +1,7 @@
 (ns redis.pool
   (:import [java.io Reader BufferedReader InputStreamReader StringReader]
            [java.net Socket]
-           [org.apache.commons.pool.impl SoftReferenceObjectPool]
+           [org.apache.commons.pool.impl GenericObjectPool]
            [org.apache.commons.pool BasePoolableObjectFactory])
   (:use redis.utils))
 
@@ -37,7 +37,8 @@
         reader (BufferedReader. (InputStreamReader. input-stream))]
     (assoc connection 
       :socket socket
-      :reader reader))) 
+      :reader reader
+      :created-at (System/currentTimeMillis)))) 
 
 (defn socket* []
   (or (:socket *connection*)
@@ -54,12 +55,21 @@
   (proxy [BasePoolableObjectFactory] []
     (makeObject []
       (new-redis-connection server-spec))
+    (validateObject [c]
+      (= "PONG" (binding [*connection* c]
+                  (redis/ping))))
     (destroyObject [c]
-       (.close (:socket c)))))
+      (.close (:socket c)))))
 
 (defrunonce init-pool [server-spec]
-  (let [factory (connection-factory server-spec)]
-    (reset! *pool* (SoftReferenceObjectPool. factory))))
+  (println "init-pool")
+  (let [factory (connection-factory server-spec)
+        p (doto (GenericObjectPool. factory)
+               (.setMaxActive 20)
+               (.setTimeBetweenEvictionRunsMillis 10000)
+               (.setWhenExhaustedAction GenericObjectPool/WHEN_EXHAUSTED_BLOCK)
+               (.setTestWhileIdle true))]
+    (reset! *pool* p)))
 
 (defn get-connection-from-pool [server-spec]
   (if-not @*pool* 
@@ -69,8 +79,10 @@
 (defn return-connection-to-pool [c]
   (.returnObject @*pool* c))
 
-(defn with-server*
-  [server-spec func]
+(defn clear-pool []
+  (.clear @*pool*))
+
+(defn with-server* [server-spec func]
   (binding [*connection* (get-connection-from-pool server-spec)]
     (let [ret (func)]
       (return-connection-to-pool *connection*)
