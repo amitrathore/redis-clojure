@@ -1,8 +1,10 @@
 (ns redis.internal
-  (:use redis.pool)
+  (:use redis.utils)
   (:refer-clojure :exclude [send read read-line])
   (:import [java.io Reader BufferedReader InputStreamReader StringReader]
-           [java.net Socket]))
+           [java.net Socket]
+           [org.apache.commons.pool.impl GenericObjectPool]
+           [org.apache.commons.pool BasePoolableObjectFactory]))
 
 (set! *warn-on-reflection* true)
 
@@ -10,6 +12,30 @@
 (def *lf*  0x0a)
 (defn- cr? [c] (= c *cr*))
 (defn- lf? [c] (= c *lf*))
+
+(defstruct connection
+  :host :port :password :db :timeout :socket :reader :writer)
+
+(def *connection* (struct-map connection
+                    :host     "127.0.0.1"
+                    :port     6379
+                    :password nil
+                    :db       0
+                    :timeout  5000
+                    :socket   nil
+                    :reader   nil
+                    :writer   nil))
+
+(defn socket* []
+  (or (:socket *connection*)
+      (throw (Exception. "Not connected to a Redis server"))))
+
+(defn send-command
+  "Send a command string to server"
+  [#^String cmd]
+  (let [out (.getOutputStream (#^Socket socket*))
+        bytes (.getBytes cmd)]
+    (.write out bytes)))
 
 (defn- uppercase [#^String s] (.toUpperCase s))
 (defn- trim [#^String s] (.trim s))
@@ -46,8 +72,6 @@
           (throw (Exception. "Error reading line: Missing LF"))))
       (recur (conj line (char c))
              (.read reader)))))
- 
-
 
 ;;
 ;; Reply dispatching
@@ -113,7 +137,6 @@
         int (parse-int line)]
     int))
  
-
 ;;
 ;; Command functions
 ;;
@@ -137,7 +160,6 @@
         args* (concat (butlast args) [data-length])
         cmd (apply inline-command name args*)]
     (str cmd data "\r\n")))
-
 
 (defn- sort-command-args-to-string
   [args]
@@ -177,11 +199,9 @@
       (str cmd "\r\n")
       (str cmd " " arg-string "\r\n"))))
 
-
 (def command-fns {:inline 'inline-command
                   :bulk   'bulk-command
                   :sort   'sort-command})
-
 
 (defn parse-params
   "Return a restructuring of params, which is of form:
@@ -210,28 +230,70 @@
                                   ~@command-params
                                   ~command-params-rest)]
               (send-command request#)
-              (~reply-fn (read-reply)))))
-       
-       )))
-
+              (~reply-fn (read-reply))))))))
 
 (defmacro defcommands
   [& command-defs]
   `(do ~@(map (fn [command-def]
               `(defcommand ~@command-def)) command-defs)))
 
+;;
+;; connection pooling
+;;
+(def *pool* (atom nil))
 
+(defn connect-to-server
+  "Create a Socket connected to server"
+  [server]
+  (let [{:keys [host port timeout]} server
+        socket (Socket. #^String host #^Integer port)]
+    (doto socket
+      (.setTcpNoDelay true)
+      (.setKeepAlive true))))
 
-(comment
-(defn with-server*
-  [server-spec func]
-  (let [connection (merge *connection* server-spec)]
-    (with-open [#^Socket socket (connect-to-server connection)]
-      (let [input-stream (.getInputStream socket)
-            output-stream (.getOutputStream socket)
-            reader (BufferedReader. (InputStreamReader. input-stream))]
-        (binding [*connection* (assoc connection 
-                                 :socket socket
-                                 :reader reader)]
-          (func))))))
-)
+(defn new-redis-connection [server-spec]
+  (let [connection (merge *connection* server-spec)
+        #^Socket socket (connect-to-server connection)
+        input-stream (.getInputStream socket)
+        output-stream (.getOutputStream socket)
+        reader (BufferedReader. (InputStreamReader. input-stream))]
+    (assoc connection 
+      :socket socket
+      :reader reader
+      :created-at (System/currentTimeMillis)))) 
+
+(defn connection-valid? []
+  (= "PING" (do (send-command (inline-command "PING")) 
+                (read-reply))))
+
+(defn connection-factory [server-spec]
+  (proxy [BasePoolableObjectFactory] []
+    (makeObject []
+      (new-redis-connection server-spec))
+    (validateObject [c]
+                    (binding [*connection* c]
+                      (connection-valid?)))
+    (destroyObject [c]
+      (.close #^Socket (:socket c)))))
+
+(defrunonce init-pool [server-spec]
+  (let [factory (connection-factory server-spec)
+        p (doto (GenericObjectPool. factory)
+               (.setMaxActive 20)
+               (.setTimeBetweenEvictionRunsMillis 10000)
+               (.setWhenExhaustedAction GenericObjectPool/WHEN_EXHAUSTED_BLOCK)
+               (.setTestWhileIdle true))]
+    (reset! *pool* p)))
+
+(defn get-connection-from-pool [server-spec]
+  (init-pool server-spec)
+  (.borrowObject #^GenericObjectPool @*pool*))
+
+(defn return-connection-to-pool [c]
+  (.returnObject #^GenericObjectPool @*pool* c))
+
+(defn with-server* [server-spec func]
+  (binding [*connection* (get-connection-from-pool server-spec)]
+    (let [ret (func)]
+      (return-connection-to-pool *connection*)
+      ret)))
