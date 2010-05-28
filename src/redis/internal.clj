@@ -263,7 +263,7 @@
       :created-at (System/currentTimeMillis)))) 
 
 (defn connection-valid? []
-  (= "PING" (do (send-command (inline-command "PING")) 
+  (= "PONG" (do (send-command (inline-command "PING")) 
                 (read-reply))))
 
 (defn connection-factory [server-spec]
@@ -280,7 +280,8 @@
   (let [factory (connection-factory server-spec)
         p (doto (GenericObjectPool. factory)
                (.setMaxActive 20)
-               (.setTimeBetweenEvictionRunsMillis 10000)
+               (.setLifo false)
+               (.setTimeBetweenEvictionRunsMillis 30000)
                (.setWhenExhaustedAction GenericObjectPool/WHEN_EXHAUSTED_BLOCK)
                (.setTestWhileIdle true))]
     (reset! *pool* p)))
