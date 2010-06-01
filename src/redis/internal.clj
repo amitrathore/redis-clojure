@@ -295,6 +295,7 @@
 
 (defn with-server* [server-spec func]
   (binding [*connection* (get-connection-from-pool server-spec)]
-    (let [ret (func)]
-      (return-connection-to-pool *connection*)
-      ret)))
+    (try 
+     (func)
+     (finally
+      (return-connection-to-pool *connection*)))))
