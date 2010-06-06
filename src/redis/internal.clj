@@ -241,6 +241,8 @@
 ;; connection pooling
 ;;
 (def *pool* (atom nil))
+(def *MAX-POOL-SIZE* 20)
+(def *POOL-EVICTION-RUN-EVERY-MILLIS* 30000)
 
 (defn connect-to-server
   "Create a Socket connected to server"
@@ -279,9 +281,9 @@
 (defrunonce init-pool [server-spec]
   (let [factory (connection-factory server-spec)
         p (doto (GenericObjectPool. factory)
-               (.setMaxActive 20)
+               (.setMaxActive *MAX-POOL-SIZE*)
                (.setLifo false)
-               (.setTimeBetweenEvictionRunsMillis 30000)
+               (.setTimeBetweenEvictionRunsMillis *POOL-EVICTION-RUN-EVERY-MILLIS*)
                (.setWhenExhaustedAction GenericObjectPool/WHEN_EXHAUSTED_BLOCK)
                (.setTestWhileIdle true))]
     (reset! *pool* p)))
