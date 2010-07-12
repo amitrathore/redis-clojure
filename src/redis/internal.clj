@@ -241,7 +241,7 @@
 ;; connection pooling
 ;;
 (def *pool* (atom nil))
-(def *MAX-POOL-SIZE* 20)
+(def *MAX-POOL-SIZE* 100)
 (def *POOL-EVICTION-RUN-EVERY-MILLIS* 30000)
 
 (defn connect-to-server
