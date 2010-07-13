@@ -1,5 +1,5 @@
 (ns redis.internal
-  (:use redis.utils)
+  (:use redis.utils org.rathore.amit.utils.logger)
   (:refer-clojure :exclude [send read read-line])
   (:import [java.io Reader BufferedReader InputStreamReader StringReader]
            [java.net Socket]
@@ -241,7 +241,7 @@
 ;; connection pooling
 ;;
 (def *pool* (atom nil))
-(def *MAX-POOL-SIZE* 100)
+(def *MAX-POOL-SIZE* 330)
 (def *POOL-EVICTION-RUN-EVERY-MILLIS* 30000)
 
 (defn connect-to-server
@@ -290,6 +290,9 @@
 
 (defn get-connection-from-pool [server-spec]
   (init-pool server-spec)
+  (log-message "[ " (.getNumIdle #^GenericObjectPool @*pool*)
+                (.getNumActive #^GenericObjectPool @*pool*)
+                (.getMaxActive #^GenericObjectPool @*pool*) "] idle connections in redis pool")
   (.borrowObject #^GenericObjectPool @*pool*))
 
 (defn return-connection-to-pool [c]
