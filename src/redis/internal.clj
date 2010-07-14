@@ -276,7 +276,12 @@
                     (binding [*connection* c]
                       (connection-valid?)))
     (destroyObject [c]
-      (.close #^Socket (:socket c)))))
+                   (try
+                    (.close #^Socket (:socket c))
+                    (catch Exception e
+                      ;; Guard against broken pipe exception when redis
+                      ;; connection times out.
+                      )))))
 
 (defrunonce init-pool [server-spec]
   (let [factory (connection-factory server-spec)
