@@ -265,8 +265,11 @@
       :created-at (System/currentTimeMillis)))) 
 
 (defn connection-valid? []
-  (= "PONG" (do (send-command (inline-command "PING")) 
-                (read-reply))))
+  (try
+   (= "PONG" (do (send-command (inline-command "PING")) 
+                 (read-reply)))
+   (catch Exception e
+     false)))
 
 (defn connection-factory [server-spec]
   (proxy [BasePoolableObjectFactory] []
@@ -290,14 +293,15 @@
                (.setLifo false)
                (.setTimeBetweenEvictionRunsMillis *POOL-EVICTION-RUN-EVERY-MILLIS*)
                (.setWhenExhaustedAction GenericObjectPool/WHEN_EXHAUSTED_BLOCK)
-               (.setTestWhileIdle true))]
+               (.setTestWhileIdle true)
+               (.setTestOnBorrow true))]
     (reset! *pool* p)))
 
 (defn get-connection-from-pool [server-spec]
   (init-pool server-spec)
   (log-message "[ " (.getNumIdle #^GenericObjectPool @*pool*)
                 (.getNumActive #^GenericObjectPool @*pool*)
-                (.getMaxActive #^GenericObjectPool @*pool*) "] idle connections in redis pool")
+                (.getMaxActive #^GenericObjectPool @*pool*) "] redis pool conn")
   (.borrowObject #^GenericObjectPool @*pool*))
 
 (defn return-connection-to-pool [c]
