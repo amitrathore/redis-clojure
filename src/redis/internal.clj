@@ -295,6 +295,9 @@
 (defn return-connection-to-pool [c]
   (.returnObject #^GenericObjectPool @*pool* c))
 
+(defn pool-status []
+  [(.getNumActive *pool*) (.getNumIdle *pool*) *MAX-POOL-SIZE*])
+
 (defn with-server* [server-spec func]
   (binding [*connection* (get-connection-from-pool server-spec)]
     (try 
