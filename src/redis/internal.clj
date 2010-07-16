@@ -1,5 +1,5 @@
 (ns redis.internal
-  (:use redis.utils)
+  (:use redis.utils org.rathore.amit.utils.logger)
   (:refer-clojure :exclude [send read read-line])
   (:import [java.io Reader BufferedReader InputStreamReader StringReader]
            [java.net Socket]
@@ -40,7 +40,7 @@
 (defn- uppercase [#^String s] (.toUpperCase s))
 (defn- trim [#^String s] (.trim s))
 (defn- parse-int [#^String s] (Integer/parseInt s))
-;(defn- char-array [len] (make-array Character/TYPE len))
+;; (defn- char-array [len] (make-array Character/TYPE len))
 
 (defn read-crlf
   "Read a CR+LF combination from Reader"
@@ -52,11 +52,11 @@
              (lf? lf))
       (throw (Exception. "Error reading CR/LF")))
     nil))
- 
+
 (defn read-line-crlf
   "Read from reader until exactly a CR+LF combination is
   found. Returns the line read without trailing CR+LF.
- 
+
   This is used instead of Reader.readLine() method since that method
   tries to read either a CR, a LF or a CR+LF, which we don't want in
   this case."
@@ -97,12 +97,12 @@
 (defmethod parse-reply :unknown
   [#^BufferedReader reader]
   (throw (Exception. (str "Unknown reply type:"))))
- 
+
 (defmethod parse-reply \-
   [#^BufferedReader reader]
   (let [error (read-line-crlf reader)]
     (throw (Exception. (str "Server error: " error)))))
- 
+
 (defmethod parse-reply \+
   [#^BufferedReader reader]
   (read-line-crlf reader))
@@ -130,13 +130,13 @@
         (if (zero? i)
           replies
           (recur (dec i) (conj replies (read-reply reader))))))))
- 
+
 (defmethod parse-reply \:
   [#^BufferedReader reader]
   (let [line (trim (read-line-crlf reader))
         int (parse-int line)]
     int))
- 
+
 ;;
 ;; Command functions
 ;;
@@ -235,13 +235,13 @@
 (defmacro defcommands
   [& command-defs]
   `(do ~@(map (fn [command-def]
-              `(defcommand ~@command-def)) command-defs)))
+                `(defcommand ~@command-def)) command-defs)))
 
 ;;
 ;; connection pooling
 ;;
 (def *pool* (atom nil))
-(def *MAX-POOL-SIZE* 20)
+(def *MAX-POOL-SIZE* 330)
 (def *POOL-EVICTION-RUN-EVERY-MILLIS* 30000)
 
 (defn connect-to-server
@@ -259,37 +259,49 @@
         input-stream (.getInputStream socket)
         output-stream (.getOutputStream socket)
         reader (BufferedReader. (InputStreamReader. input-stream))]
-    (assoc connection 
+    (assoc connection
       :socket socket
       :reader reader
-      :created-at (System/currentTimeMillis)))) 
+      :created-at (System/currentTimeMillis))))
 
 (defn connection-valid? []
-  (= "PONG" (do (send-command (inline-command "PING")) 
-                (read-reply))))
+  (try
+   (= "PONG" (do (send-command (inline-command "PING"))
+                 (read-reply)))
+   (catch Exception e
+     false)))
 
 (defn connection-factory [server-spec]
   (proxy [BasePoolableObjectFactory] []
     (makeObject []
-      (new-redis-connection server-spec))
+                (new-redis-connection server-spec))
     (validateObject [c]
                     (binding [*connection* c]
                       (connection-valid?)))
     (destroyObject [c]
-      (.close #^Socket (:socket c)))))
+                   (try
+                    (.close #^Socket (:socket c))
+                    (catch Exception e
+                      ;; Guard against broken pipe exception when redis
+                      ;; connection times out.
+                      )))))
 
 (defrunonce init-pool [server-spec]
   (let [factory (connection-factory server-spec)
         p (doto (GenericObjectPool. factory)
-               (.setMaxActive *MAX-POOL-SIZE*)
-               (.setLifo false)
-               (.setTimeBetweenEvictionRunsMillis *POOL-EVICTION-RUN-EVERY-MILLIS*)
-               (.setWhenExhaustedAction GenericObjectPool/WHEN_EXHAUSTED_BLOCK)
-               (.setTestWhileIdle true))]
+            (.setMaxActive *MAX-POOL-SIZE*)
+            (.setLifo false)
+            (.setTimeBetweenEvictionRunsMillis *POOL-EVICTION-RUN-EVERY-MILLIS*)
+            (.setWhenExhaustedAction GenericObjectPool/WHEN_EXHAUSTED_BLOCK)
+            (.setTestWhileIdle true)
+            (.setTestOnBorrow true))]
     (reset! *pool* p)))
 
 (defn get-connection-from-pool [server-spec]
   (init-pool server-spec)
+  (log-message "[ " (.getNumIdle #^GenericObjectPool @*pool*)
+               (.getNumActive #^GenericObjectPool @*pool*)
+               (.getMaxActive #^GenericObjectPool @*pool*) "] redis pool conn")
   (.borrowObject #^GenericObjectPool @*pool*))
 
 (defn return-connection-to-pool [c]
@@ -300,7 +312,7 @@
 
 (defn with-server* [server-spec func]
   (binding [*connection* (get-connection-from-pool server-spec)]
-    (try 
+    (try
      (func)
      (finally
       (return-connection-to-pool *connection*)))))
