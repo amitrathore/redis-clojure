@@ -34,7 +34,7 @@
   "Send a command string to server"
   [#^String cmd]
   (let [out (.getOutputStream (#^Socket socket*))
-        bytes (.getBytes cmd)]
+        bytes (.getBytes cmd "UTF-8")]
     (.write out bytes)))
 
 (defn- uppercase [#^String s] (.toUpperCase s))
@@ -117,7 +117,7 @@
         (do
           (do-read reader cbuf 0 length)
           (read-crlf reader) ;; CRLF
-          (String. cbuf))))))
+          (String. (.getBytes (String. cbuf)) "UTF-8"))))))
 
 (defmethod parse-reply \*
   [#^BufferedReader reader]
@@ -156,7 +156,7 @@
   "Create a string for a bulk command"
   [name & args]
   (let [data (str (last args))
-        data-length (count (str data))
+        data-length (count (.getBytes data "UTF-8"))
         args* (concat (butlast args) [data-length])
         cmd (apply inline-command name args*)]
     (str cmd data "\r\n")))
@@ -297,18 +297,16 @@
             (.setTestOnBorrow true))]
     (reset! *pool* p)))
 
+(defn pool-status []
+  [(.getNumActive #^GenericObjectPool @*pool*) (.getNumIdle #^GenericObjectPool @*pool*) (.getMaxActive #^GenericObjectPool @*pool*)])
+
 (defn get-connection-from-pool [server-spec]
   (init-pool server-spec)
-  (log-message "[ " (.getNumIdle #^GenericObjectPool @*pool*)
-               (.getNumActive #^GenericObjectPool @*pool*)
-               (.getMaxActive #^GenericObjectPool @*pool*) "] redis pool conn")
+  (log-message (pool-status)  "redis pool conn")
   (.borrowObject #^GenericObjectPool @*pool*))
 
 (defn return-connection-to-pool [c]
   (.returnObject #^GenericObjectPool @*pool* c))
-
-(defn pool-status []
-  [(.getNumActive *pool*) (.getNumIdle *pool*) *MAX-POOL-SIZE*])
 
 (defn with-server* [server-spec func]
   (binding [*connection* (get-connection-from-pool server-spec)]
