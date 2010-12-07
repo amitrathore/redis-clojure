@@ -154,5 +154,9 @@
   (shutdown    [] :inline)
   ;; Remote control
   (info        [] :inline string-to-map)
+   ;; Pub/Sub
+  (publish [channel message] :bulk)
+  (subscribe [channel callback] :bulk)
+  (unsubscribe [channel] :bulk)
   ;;(monitor     [] :inline))
 )

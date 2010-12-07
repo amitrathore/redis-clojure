@@ -212,6 +212,21 @@
   (let [[args rest] (split-with #(not= % '&) params)]
     [args (last rest)]))
 
+(def end-subscribe (atom false))
+
+(defn subscribe-command [channel callback]
+  (send-command (inline-command "SUBSCRIBE" channel))
+  ;; skip the command reply
+  (read-reply)
+  (while (not @end-subscribe)
+    (let [[_ _ chan-name] (read-reply)]
+      (if (= channel chan-name)
+        (let [[_ _ key] (read-reply)
+              [_ _ val] (read-reply)]
+          (callback key val))
+        (throw (IllegalStateException.
+                (str channel ": Subscribed channel out of sync.")))))))
+
 (defmacro defcommand
   "Define a function for Redis command name with parameters
   params. Type is one of :inline, :bulk or :sort, which determines how
@@ -225,12 +240,14 @@
               command-params-rest] (parse-params params)]
          `(defn ~name
             ~params
-            (let [request# (apply ~command-fn
-                                  ~command
-                                  ~@command-params
-                                  ~command-params-rest)]
-              (send-command request#)
-              (~reply-fn (read-reply))))))))
+            ~(if (= command "SUBSCRIBE")
+               `(subscribe-command ~@params)
+               `(let [request# (apply ~command-fn
+                                      ~command
+                                      ~@command-params
+                                      ~command-params-rest)]
+                  (send-command request#)
+                  (~reply-fn (read-reply)))))))))
 
 (defmacro defcommands
   [& command-defs]
