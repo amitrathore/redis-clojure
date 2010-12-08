@@ -214,18 +214,23 @@
 
 (def end-subscribe (atom false))
 
+(def test-sync =)
+
 (defn subscribe-command [channel callback]
   (send-command (inline-command "SUBSCRIBE" channel))
   ;; skip the command reply
   (read-reply)
-  (while (not @end-subscribe)
-    (let [[_ _ chan-name] (read-reply)]
-      (if (= channel chan-name)
-        (let [[_ _ key] (read-reply)
-              [_ _ val] (read-reply)]
-          (callback key val))
-        (throw (IllegalStateException.
-                (str channel ": Subscribed channel out of sync.")))))))
+  (try
+    (while (not @end-subscribe)
+      (let [[_ _ chan-name] (read-reply)]
+        (if (test-sync channel chan-name)
+          (let [[_ _ key] (read-reply)
+                [_ _ val] (read-reply)]
+            (callback key val))
+          (throw (IllegalStateException.
+                  (str channel ": Subscribed channel out of sync."))))))
+    (finally
+       (send-command (inline-command "UNSUBSCRIBE" channel)))))
 
 (defmacro defcommand
   "Define a function for Redis command name with parameters

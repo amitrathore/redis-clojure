@@ -1,6 +1,7 @@
 (ns redis.tests
   (:refer-clojure :exclude [get set keys type sort])
   (:require redis)
+  (:require redis.internal)
   (:use [clojure.test]))
 
 
@@ -27,13 +28,13 @@
 (deftest ping
   (is (= "PONG" (redis/ping))))
 
-(deftest set
+(deftest set-tests
   (redis/set "bar" "foo")
   (is (= "foo" (redis/get "bar")))
   (redis/set "foo" "baz")
   (is (= "baz" (redis/get "foo"))))
 
-(deftest get
+(deftest get-test
   (is (= nil (redis/get "bar")))
   (is (= "bar" (redis/get "foo"))))
 
@@ -101,13 +102,13 @@
   (is (= true (redis/del "foo")))
   (is (= nil  (redis/get "foo"))))
 
-(deftest type
+(deftest type-test
   (is (= :none (redis/type "nonexistent")))
   (is (= :string (redis/type "foo")))
   (is (= :list (redis/type "list")))
   (is (= :set (redis/type "set"))))
 
-(deftest keys
+(deftest keys-test
   (is (= [] (redis/keys "a*")))
   (is (= ["foo"] (redis/keys "f*")))
   (is (= ["foo"] (redis/keys "f?o")))
@@ -456,7 +457,7 @@
 ;;
 ;; Sorting
 ;;
-(deftest sort
+(deftest sort-test
   (redis/lpush "ids" 1)
   (redis/lpush "ids" 4)
   (redis/lpush "ids" 2)
@@ -522,3 +523,62 @@
   (let [ages-ago (new java.util.Date (long 1))]
     (is (.before ages-ago (redis/lastsave)))))
 
+;;
+;; Subscribe commands
+;;
+
+(def EXPIRED-CHANNEL "redis-expired-keys")
+(def COUNTER 100)
+
+(def cb-data (atom {}))
+(def exception-data (atom nil))
+
+(defn callback [k v]
+  (swap! cb-data conj [k v])
+  (when (= COUNTER (count @cb-data))
+    (reset! redis.internal/end-subscribe true)))
+
+(defn callback-finished? []
+  (every? #(= (@cb-data (str "key-" %)) (str "val-" %))
+          (take COUNTER (iterate inc 0))))
+
+(defn sub-with-conn [config conn test-sync-fn]
+  (fn []
+    (binding [org.rathore.amit.utils.config/*clj-utils-config*
+              config
+              redis.internal/test-sync
+              test-sync-fn]
+      (try
+        (redis/with-server
+          (select-keys conn [:host :port :db])
+          (redis/subscribe EXPIRED-CHANNEL callback))
+        (catch Exception e
+          (reset! exception-data e))))))
+
+(defn clear-subscribe-test-data []
+  (reset! redis.internal/end-subscribe false)
+  (reset! cb-data {})
+  (reset! exception-data nil))
+
+(defn subscribe-test [test-sync-fn]
+  (clear-subscribe-test-data)
+  (let [t (Thread.
+           (sub-with-conn org.rathore.amit.utils.config/*clj-utils-config*
+             redis.internal/*connection* test-sync-fn))]
+    (.start t)
+    (Thread/sleep 100)
+    (try
+      (dotimes [a COUNTER]
+        (redis/set (str "key-" a) (str "val-" a))
+        (redis/expire (str "key-" a) 1))
+      (.join t 2000)
+      (finally
+       (.interrupt t)))))
+
+(deftest subscribe-tests
+  (testing "subscribe correctly processes a bunch of expires"
+    (subscribe-test =)
+    (is (callback-finished?)))
+  (testing "subscribe generates an exception if it gets out of sync"
+    (subscribe-test not=)
+    (is @exception-data)))
