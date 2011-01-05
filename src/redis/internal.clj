@@ -228,7 +228,7 @@
                 [_ _ val] (read-reply)]
             (callback key val))
           (throw (IllegalStateException.
-                  (str channel ": Subscribed channel out of sync."))))))
+                  (str channel ": Subscribed channel out of sync." chan-name))))))
     (finally
        (send-command (inline-command "UNSUBSCRIBE" channel)))))
 
