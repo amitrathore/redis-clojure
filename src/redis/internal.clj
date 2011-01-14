@@ -1,7 +1,7 @@
 (ns redis.internal
   (:use redis.utils org.rathore.amit.utils.logger)
   (:refer-clojure :exclude [send read read-line])
-  (:import [java.io Reader BufferedReader InputStreamReader StringReader]
+  (:import [java.io InputStream BufferedInputStream]
            [java.net Socket]
            [org.apache.commons.pool.impl GenericObjectPool]
            [org.apache.commons.pool BasePoolableObjectFactory]))
@@ -44,7 +44,7 @@
 
 (defn read-crlf
   "Read a CR+LF combination from Reader"
-  [#^Reader reader]
+  [#^InputStream reader]
   (let [cr (.read reader)
         lf (.read reader)]
     (when-not
@@ -60,7 +60,7 @@
   This is used instead of Reader.readLine() method since that method
   tries to read either a CR, a LF or a CR+LF, which we don't want in
   this case."
-  [#^BufferedReader reader]
+  [#^BufferedInputStream reader]
   (loop [line []
          c (.read reader)]
     (when (< c 0)
@@ -76,13 +76,13 @@
 ;;
 ;; Reply dispatching
 ;;
-(defn- do-read [#^Reader reader #^chars cbuf offset length]
+(defn- do-read [#^InputStream reader #^chars cbuf offset length]
   (let [nread (.read reader cbuf offset length)]
     (if (not= nread length)
       (recur reader cbuf (+ offset nread) (- length nread)))))
 
 (defn reply-type
-  ([#^BufferedReader reader]
+  ([#^BufferedInputStream reader]
      (char (.read reader))))
 
 (defmulti parse-reply reply-type :default :unknown)
@@ -91,36 +91,36 @@
   ([]
      (let [reader (*connection* :reader)]
        (read-reply reader)))
-  ([#^BufferedReader reader]
+  ([#^BufferedInputStream reader]
      (parse-reply reader)))
 
 (defmethod parse-reply :unknown
-  [#^BufferedReader reader]
+  [#^BufferedInputStream reader]
   (throw (Exception. (str "Unknown reply type:"))))
 
 (defmethod parse-reply \-
-  [#^BufferedReader reader]
+  [#^BufferedInputStream reader]
   (let [error (read-line-crlf reader)]
     (throw (Exception. (str "Server error: " error)))))
 
 (defmethod parse-reply \+
-  [#^BufferedReader reader]
+  [#^BufferedInputStream reader]
   (read-line-crlf reader))
 
 (defmethod parse-reply \$
-  [#^BufferedReader reader]
+  [#^BufferedInputStream reader]
   (let [line (read-line-crlf reader)
         length (parse-int line)]
     (if (< length 0)
       nil
-      (let [#^chars cbuf (char-array length)]
+      (let [#^bytes cbuf (byte-array length)]
         (do
           (do-read reader cbuf 0 length)
           (read-crlf reader) ;; CRLF
           (String. (.getBytes (String. cbuf)) "UTF-8"))))))
 
 (defmethod parse-reply \*
-  [#^BufferedReader reader]
+  [#^BufferedInputStream reader]
   (let [line (read-line-crlf reader)
         count (parse-int line)]
     (if (< count 0)
@@ -132,7 +132,7 @@
           (recur (dec i) (conj replies (read-reply reader))))))))
 
 (defmethod parse-reply \:
-  [#^BufferedReader reader]
+  [#^BufferedInputStream reader]
   (let [line (trim (read-line-crlf reader))
         int (parse-int line)]
     int))
@@ -280,7 +280,7 @@
         #^Socket socket (connect-to-server connection)
         input-stream (.getInputStream socket)
         output-stream (.getOutputStream socket)
-        reader (BufferedReader. (InputStreamReader. input-stream))]
+        reader (BufferedInputStream. input-stream)]
     (assoc connection
       :socket socket
       :reader reader
