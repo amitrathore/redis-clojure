@@ -15,7 +15,7 @@
                                 (do
                                   (if (:password *connection*)
                                     (redis/auth (:password *connection*)))
-                                  (redis/select (:db ~server-spec))
+                                  (redis/select (:db *connection*))
                                   ~@body))))
 
 (defmacro atomically
