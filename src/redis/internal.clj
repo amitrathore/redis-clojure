@@ -1,6 +1,6 @@
 (ns redis.internal
-  (:use redis.utils org.rathore.amit.utils.logger)
   (:refer-clojure :exclude [send read read-line])
+  (:use [redis.utils])
   (:import [java.io InputStream BufferedInputStream]
            [java.net Socket]
            [org.apache.commons.pool.impl GenericObjectPool]
@@ -33,6 +33,7 @@
 (defn send-command
   "Send a command string to server"
   [#^String cmd]
+  (prn cmd)
   (let [out (.getOutputStream (#^Socket socket*))
         bytes (.getBytes cmd "UTF-8")]
     (.write out bytes)))
@@ -145,11 +146,23 @@
   [separator sequence]
   (apply str (interpose separator sequence)))
 
+(def redis-keywords #{:by :limit :get :store :alpha :desc :withscores :weights})
+
+(defn- convert-arguments
+  "Convert keyword arguments to redis keywords.  If its a keyword it is checked
+against the known keywords and uppercased.  If its not a keyword it passes through."
+  [x]
+  (if (keyword? x)
+    (if (redis-keywords x)
+      (uppercase (name x))
+      (throw (Exception.
+	      (str "Error parsing arguments: Unknown argument: " type))))
+    x))
 
 (defn inline-command
   "Create a string for an inline command"
   [name & args]
-  (let [cmd (str-join " " (conj args name))]
+  (let [cmd (str-join " " (conj (map convert-arguments args) name))]
     (str cmd "\r\n")))
 
 (defn bulk-command
@@ -161,47 +174,8 @@
         cmd (apply inline-command name args*)]
     (str cmd data "\r\n")))
 
-(defn- sort-command-args-to-string
-  [args]
-  (loop [arg-strings []
-         args args]
-    (if (empty? args)
-      (str-join " " arg-strings)
-      (let [type (first args)
-            args (rest args)]
-        (condp = type
-          :by (let [pattern (first args)]
-                (recur (conj arg-strings "BY" pattern)
-                       (rest args)))
-          :limit (let [start (first args)
-                       end (second args)]
-                   (recur (conj arg-strings "LIMIT" start end)
-                          (drop 2 args)))
-          :get (let [pattern (first args)]
-                 (recur (conj arg-strings "GET" pattern)
-                        (rest args)))
-          :store (let [key (first args)]
-                   (recur (conj arg-strings "STORE" key)
-                          (rest args)))
-          :alpha (recur (conj arg-strings "ALPHA") args)
-          :asc  (recur (conj arg-strings "ASC") args)
-          :desc (recur (conj arg-strings "DESC") args)
-          (throw (Exception. (str "Error parsing SORT arguments: Unknown argument: " type))))))))
-
-(defn sort-command
-  [name & args]
-  (when-not (= name "SORT")
-    (throw (Exception. "Sort command name must be 'SORT'")))
-  (let [key (first args)
-        arg-string (sort-command-args-to-string (rest args))
-        cmd (str "SORT " key)]
-    (if (empty? arg-string)
-      (str cmd "\r\n")
-      (str cmd " " arg-string "\r\n"))))
-
 (def command-fns {:inline 'inline-command
-                  :bulk   'bulk-command
-                  :sort   'sort-command})
+                  :bulk   'bulk-command})
 
 (defn parse-params
   "Return a restructuring of params, which is of form:
@@ -324,7 +298,6 @@
 
 (defn get-connection-from-pool [server-spec]
   (init-pool server-spec)
-  (log-message (pool-status)  "redis pool conn")
   (.borrowObject #^GenericObjectPool @*pool*))
 
 (defn return-connection-to-pool [c]
